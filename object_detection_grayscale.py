@@ -5,6 +5,12 @@ from PIL import ImageDraw
 from PIL import ImageFont
 import os
 
+
+import pyspark
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.appName('Our App').getOrCreate()
+
 # Frozen inference graph files. NOTE: change the path to where you saved the models.
 SSD_GRAPH_FILE = './model/faster_rcnn_model.pb'
 
@@ -75,20 +81,31 @@ detection_scores = detection_graph.get_tensor_by_name('detection_scores:0')
 detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
 
 def run_detection():
+    sparkDataFrame = spark.read.format('image').load('/images/*')
+
+    # collect images so they can be iterated
+    collection_images = sparkDataFrame.collect()
+
     images = []
     image_objects = []
     names = []
-    for img_name in os.listdir('./images'):
-        # Load an image
-        image_path = './images/' + img_name
-        image = Image.open(image_path).convert('L')
+    print(sparkDataFrame.count())
+    for i in range(sparkDataFrame.count()):
+        # get image data from a single row
+        bytedata = collection_images[i].image.data
+        width = collection_images[i].image.width
+        height = collection_images[i].image.height
+        name = collection_images[i].image.origin
+
+        # load the image using PIL  
+        image = Image.frombytes('L', (width,height), bytes(bytedata))
         image_objects.append(image)
         image_np = np.expand_dims(np.asarray(image, dtype=np.uint8), 0)
         image_np = image_np[..., np.newaxis]
         image_np = tf.image.grayscale_to_rgb(tf.convert_to_tensor(image_np))
         image_np = np.asarray(image_np, dtype=np.uint8)
         images.append(image_np)
-        names.append(img_name)
+        names.append(name)
 
     with tf.compat.v1.Session(graph=detection_graph) as sess:
         for i in range(len(images)):
@@ -112,6 +129,8 @@ def run_detection():
             # Each class with be represented by a differently colored box
             draw_boxes(image_objects[i], box_coords, classes)
 
-            image_objects[i].save('./out/out_' + names[i])
+            get_name = names[i].split('/')
+
+            image_objects[i].save('./out/out_' + get_name[len(get_name) - 1])
 
 run_detection()
